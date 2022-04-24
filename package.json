@@ -1,0 +1,23 @@
+{
+  "name": "flashloans",
+  "version": "1.0.0",
+  "description": "A test project to practice arbitrage options in defi via flashloans.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahsanwtc/flashloans.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ahsanwtc/flashloans/issues"
+  },
+  "homepage": "https://github.com/ahsanwtc/flashloans#readme",
+  "dependencies": {
+    "web3": "^1.7.3"
+  }
+}
