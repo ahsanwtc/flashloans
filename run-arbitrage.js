@@ -58,7 +58,18 @@ const init = async () => {
         daiWeth.getOutputAmount(new TokenAmount(weth, AMOUNT_ETH_WEI)),
       ]);
 
-      console.log(uniswapResults);
+      const uniswapRates = {
+        /* for the buy price, divide the number of DAI provided as input by the number of ETH uniswap returned */
+        /* and multiply the returned value which is in ethers with 10 ** 18 to get correct precision */
+        buy: parseFloat(AMOUNT_DAI_WEI / (uniswapResults[0][0].toExact() * 10 ** 18)),
+        
+        /* for the sell price, divide the uniswap result which is amount of DAI we get if we give ether as input */
+        sell: parseFloat(uniswapResults[1][0].toExact() / ETH_AMOUNT)
+      };
+
+      console.log('Uniswap ETH/DAI');
+      console.log(uniswapRates);
+      
     })
     .on('error', error => {
       console.log(error);
