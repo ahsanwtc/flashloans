@@ -8,7 +8,6 @@ const web3 = new Web3(
   new Web3.providers.WebsocketProvider(process.env.RPC_URL)
 );
 
-
 const kyber = new web3.eth.Contract(abis.kyber.kyberNetworkProxy, addresses.mainnet.kyber.kyberNetworkProxy);
 
 
@@ -31,7 +30,15 @@ web3.eth.subscribe('newBlockHeaders')
       kyber.methods.getExpectedRate('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', addresses.mainnet.tokens.dai, AMOUNT_ETH_WEI).call()
     ]);
 
-    console.log(kyberResults);
+    /* calculations with referece to dai */
+    /* to sell dai, we will be BUYing eth, rate should be 1/rate to get the value in dai */
+    const kyberRates = {
+      buy: parseFloat(1 / (kyberResults[0].expectedRate / (10 ** 18))),
+      sell: parseFloat(kyberResults[1].expectedRate / (10 ** 18))
+    };
+
+    console.log('Kyber ETH/DAI');
+    console.log(kyberRates);
   })
   .on('error', error => {
     console.log(error);
