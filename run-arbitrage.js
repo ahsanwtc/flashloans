@@ -15,6 +15,9 @@ const kyber = new web3.eth.Contract(abis.kyber.kyberNetworkProxy, addresses.main
 /* USD price of ETH */
 const RECENT_ETH_PRICE = 2934; 
 
+/* hard coding gas cost till smart contract is deployed */
+const gasCost = 200000;
+
 const ETH_AMOUNT = 100;
 const AMOUNT_ETH_WEI = web3.utils.toWei(ETH_AMOUNT.toString());
 const AMOUNT_DAI_WEI = web3.utils.toWei((ETH_AMOUNT * RECENT_ETH_PRICE).toString());
@@ -69,6 +72,36 @@ const init = async () => {
 
       console.log('Uniswap ETH/DAI');
       console.log(uniswapRates);
+
+      /* Current gas price in wei */
+      const gasPrice = await web3.eth.getGasPrice();
+      
+      /* estimate total gas cost for this transaction */
+      const txCost = gasCost * parseInt(gasPrice);
+
+      /* current ETH price is average buy and sell price */
+      const currentEthPrice = (uniswapRates.buy + uniswapRates.sell) / 2;
+
+      const profitInUSDBuyEthOnKyberSellEthOnUniswap = (parseInt(AMOUNT_ETH_WEI) / 10 ** 18) * (uniswapRates.sell - kyberRates.buy) - (txCost / 10 ** 18) * currentEthPrice;
+      const profitInUSDBuyEthOnUniswapSellEthOnKyber = (parseInt(AMOUNT_ETH_WEI) / 10 ** 18) * (kyberRates.sell - uniswapRates.buy) - (txCost / 10 ** 18) * currentEthPrice;
+
+      if (profitInUSDBuyEthOnKyberSellEthOnUniswap > 0) {
+        console.log('Arb opportunity found!');
+        console.log(`Buy ETH on Kyber at ${kyberRates.buy} dai`);
+        console.log(`Sell ETH on Uniswap at ${uniswapRates.sell} dai`);
+        console.log(`Expected profit: ${profitInUSDBuyEthOnKyberSellEthOnUniswap} dai`);
+
+        /* Execute arb Kyber <=> Uniswap */ 
+
+      } else if (profitInUSDBuyEthOnUniswapSellEthOnKyber > 0) {
+        console.log('Arb opportunity found!');
+        console.log(`Buy ETH from Uniswap at ${uniswapRates.buy} dai`);
+        console.log(`Sell ETH from Kyber at ${kyberRates.sell} dai`);
+        console.log(`Expected profit: ${profitInUSDBuyEthOnUniswapSellEthOnKyber} dai`);
+        
+        /* Execute arb Uniswap <=> Kyber */
+
+      }
       
     })
     .on('error', error => {
