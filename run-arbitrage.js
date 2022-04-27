@@ -18,12 +18,9 @@ const kyber = new web3.eth.Contract(abis.kyber.kyberNetworkProxy, addresses.main
 /* USD price of ETH */
 const RECENT_ETH_PRICE = 2934; 
 
-/* hard coding gas cost till smart contract is deployed */
-const gasCost = 200000;
-
-const ETH_AMOUNT = 100;
-const AMOUNT_ETH_WEI = web3.utils.toWei(ETH_AMOUNT.toString());
-const AMOUNT_DAI_WEI = web3.utils.toWei((ETH_AMOUNT * RECENT_ETH_PRICE).toString());
+const ONE_WEI = web3.utils.toBN(web3.utils.toWei('1'));
+const DAI_AMOUNT = 20000;
+const AMOUNT_DAI_WEI = web3.utils.toBN(web3.utils.toWei(DAI_AMOUNT.toString()));
 const DIRECTION = {
   KYBER_TO_UNISWAP: 0,
   UNISWAP_TO_KYBER: 1
@@ -34,113 +31,109 @@ const DAI = new Token(ChainId.MAINNET, '0x6B175474E89094C44Da98b954EedeAC495271d
 const init = async () => {
   const networkId = await web3.eth.net.getId();
   const flashloan = await web3.eth.Contract(Flashloan.abi, Flashloan.networks[networkId].address);
-  
-  const [dai, weth] = await Promise.all(
-    [addresses.mainnet.tokens.dai, addresses.mainnet.tokens.weth].map(address => Fetcher.fetchTokenData(ChainId.MAINNET, address))
-  );
 
-  const daiWeth = await Fetcher.fetchPairData(DAI, WETH[DAI.chainId]);
-  // const daiWeth = await Pair.fetchData(dai, weth);
-
+  let ethPrice;
+  const updateEthPrice = async () => {
+    const results = await kyber.methods.getExpectedRate('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', addresses.mainnet.tokens.dai, 1).call();
+    ethPrice = web3.utils.toBN('1').mul(web3.utils.toBN(results.expectedRate)).div(ONE_WEI);
+  }
+  await updateEthPrice();
+  setInterval(updateEthPrice, 15000);
   
   /* subscribing to notification whenever a new block is mined */
   /* just interested in block headers because don't need the block data  */
   web3.eth.subscribe('newBlockHeaders')
     .on('data', async block => {
       console.log(`new block received | block # ${block.number}`);
-      const kyberResults = await Promise.all([
-        /* rates when selling dai to buy ether */
-        kyber.methods.getExpectedRate(addresses.mainnet.tokens.dai, '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', AMOUNT_DAI_WEI).call(),
-        /* rates when selling ehter to buy dai */
-        kyber.methods.getExpectedRate('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', addresses.mainnet.tokens.dai, AMOUNT_ETH_WEI).call()
-      ]);
-  
-      /* calculations with referece to dai */
-      /* to sell dai, we will be BUYing eth, rate should be 1/rate to get the value in dai */
-      const kyberRates = {
-        buy: parseFloat(1 / (kyberResults[0].expectedRate / (10 ** 18))),
-        sell: parseFloat(kyberResults[1].expectedRate / (10 ** 18))
-      };
-  
-      console.log('Kyber ETH/DAI');
-      console.log(kyberRates);
-
-      const uniswapResults = await Promise.all([
-        daiWeth.getOutputAmount(new TokenAmount(dai, AMOUNT_DAI_WEI)),
-        daiWeth.getOutputAmount(new TokenAmount(weth, AMOUNT_ETH_WEI)),
-      ]);
-
-      const uniswapRates = {
-        /* for the buy price, divide the number of DAI provided as input by the number of ETH uniswap returned */
-        /* and multiply the returned value which is in ethers with 10 ** 18 to get correct precision */
-        buy: parseFloat(AMOUNT_DAI_WEI / (uniswapResults[0][0].toExact() * 10 ** 18)),
-        
-        /* for the sell price, divide the uniswap result which is amount of DAI we get if we give ether as input */
-        sell: parseFloat(uniswapResults[1][0].toExact() / ETH_AMOUNT)
-      };
-
-      console.log('Uniswap ETH/DAI');
-      console.log(uniswapRates);
-
-      const [tx1, tx2] = Object.keys(DIRECTION).map(direction => flashloan.methods.initiateFlashloan(
-        addresses.mainnet.dydx.solo,
-        addresses.mainnet.tokens.dai,
-        AMOUNT_DAI_WEI,
-        direction
-      ));
-
-      const [gasPrice, gasCost1, gasCost2] = await Promise.all([
-        /* Current gas price in wei */
-        web3.eth.getGasPrice(),
-        tx1.estimateGas({ from: admin }),
-        tx2.estimateGas({ from: admin })
-      ]);
       
-      /* estimate total gas cost for this transaction */
-      const txCost1 = parseInt(gasCost1) * parseInt(gasPrice);
-      const txCost2 = parseInt(gasCost2) * parseInt(gasPrice);
+      const [dai, weth] = await Promise.all(
+        [addresses.mainnet.tokens.dai, addresses.mainnet.tokens.weth].map(address => Fetcher.fetchTokenData(ChainId.MAINNET, address))
+      );
+    
+      const daiWeth = await Fetcher.fetchPairData(DAI, WETH[DAI.chainId]);
 
-      /* current ETH price is average buy and sell price */
-      const currentEthPrice = (uniswapRates.buy + uniswapRates.sell) / 2;
+      /* rates when selling dai to buy ether */
+      const amountsEth = await Promise.all([
+        kyber.methods.getExpectedRate(addresses.mainnet.tokens.dai, '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', AMOUNT_DAI_WEI).call(),
+        daiWeth.getOutputAmount(new TokenAmount(dai, AMOUNT_DAI_WEI)),
+      ]);
 
-      const profitInUSDBuyEthOnKyberSellEthOnUniswap = (parseInt(AMOUNT_ETH_WEI) / 10 ** 18) * (uniswapRates.sell - kyberRates.buy) - (txCost1 / 10 ** 18) * currentEthPrice;
-      const profitInUSDBuyEthOnUniswapSellEthOnKyber = (parseInt(AMOUNT_ETH_WEI) / 10 ** 18) * (kyberRates.sell - uniswapRates.buy) - (txCost2 / 10 ** 18) * currentEthPrice;
+      const ethFromKyber = AMOUNT_DAI_WEI.mul(web3.utils.toBN(amountsEth[0].expectedRate)).div(ONE_WEI);
+      const ethFromUniswap = web3.utils.toBN(amountsEth[1][0].raw.toString());
+      
+      /* rates when selling ehter to buy dai */
+      const amountsDai = await Promise.all([
+        kyber.methods.getExpectedRate('0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', addresses.mainnet.tokens.dai, ethFromUniswap.toString()).call(),
+        daiWeth.getOutputAmount(new TokenAmount(weth, ethFromKyber.toString())),
+      ]);
 
-      if (profitInUSDBuyEthOnKyberSellEthOnUniswap > 0) {
-        console.log('Arb opportunity found!');
-        console.log(`Buy ETH on Kyber at ${kyberRates.buy} dai`);
-        console.log(`Sell ETH on Uniswap at ${uniswapRates.sell} dai`);
-        console.log(`Expected profit: ${profitInUSDBuyEthOnKyberSellEthOnUniswap} dai`);
+      const daiFromKyber = ethFromUniswap.mul(web3.utils.toBN(amountsDai[0].expectedRate)).div(ONE_WEI);
+      const daiFromUniswap = web3.utils.toBN(amountsDai[1][0].raw.toString());
 
-        /* Execute arb Kyber <=> Uniswap */ 
-        const data = tx1.encodeABI();
-        const txData = {
-          from: admin,
-          to: flashloan.options.address,
-          data,
-          gas: gasCost1,
-          gasPrice
-        };
-        const receipt = await web3.eth.sendTransaction(txData);
-        console.log(`Transaction hash: ${receipt.transactionHash}`);
+      console.log(`Kyber -> Uniswap. Dai input / output: ${web3.utils.fromWei(AMOUNT_DAI_WEI.toString())} / ${web3.utils.fromWei(daiFromUniswap.toString())}`);
+      console.log(`Uniswap -> Kyber. Dai input / output: ${web3.utils.fromWei(AMOUNT_DAI_WEI.toString())} / ${web3.utils.fromWei(daiFromKyber.toString())}`);
 
-      } else if (profitInUSDBuyEthOnUniswapSellEthOnKyber > 0) {
-        console.log('Arb opportunity found!');
-        console.log(`Buy ETH from Uniswap at ${uniswapRates.buy} dai`);
-        console.log(`Sell ETH from Kyber at ${kyberRates.sell} dai`);
-        console.log(`Expected profit: ${profitInUSDBuyEthOnUniswapSellEthOnKyber} dai`);
-        
-        /* Execute arb Uniswap <=> Kyber */
-        const data = tx2.encodeABI();
-        const txData = {
-          from: admin,
-          to: flashloan.options.address,
-          data,
-          gas: gasCost2,
-          gasPrice
-        };
-        const receipt = await web3.eth.sendTransaction(txData);
-        console.log(`Transaction hash: ${receipt.transactionHash}`);
+      if(daiFromUniswap.gt(AMOUNT_DAI_WEI)) {
+        const tx = flashloan.methods.initiateFlashloan(
+          addresses.mainnet.dydx.solo,
+          addresses.mainnet.tokens.dai,
+          AMOUNT_DAI_WEI,
+          DIRECTION.KYBER_TO_UNISWAP
+        );
+
+        const [gasPrice, gasCost] = await Promise.all([
+          web3.eth.getGasPrice(),
+          tx.estimateGas({ from: admin }),
+        ]);
+
+        const txCost = web3.utils.toBN(gasCost).mul(web3.utils.toBN(gasPrice)).mul(ethPrice);
+        const profit = daiFromUniswap.sub(AMOUNT_DAI_WEI).sub(txCost);
+
+        if(profit > 0) {
+          console.log('Arb opportunity found Kyber -> Uniswap!');
+          console.log(`Expected profit: ${web3.utils.fromWei(profit)} Dai`);
+          const data = tx.encodeABI();
+          const txData = {
+            from: admin,
+            to: flashloan.options.address,
+            data,
+            gas: gasCost,
+            gasPrice
+          };
+          const receipt = await web3.eth.sendTransaction(txData);
+          console.log(`Transaction hash: ${receipt.transactionHash}`);
+        }
+
+      }
+
+      if(daiFromKyber.gt(AMOUNT_DAI_WEI)) {
+        const tx = flashloan.methods.initiateFlashloan(
+          addresses.mainnet.dydx.solo, 
+          addresses.mainnet.tokens.dai, 
+          AMOUNT_DAI_WEI,
+          DIRECTION.UNISWAP_TO_KYBER
+        );
+        const [gasPrice, gasCost] = await Promise.all([
+          web3.eth.getGasPrice(),
+          tx.estimateGas({from: admin}),
+        ]);
+        const txCost = web3.utils.toBN(gasCost).mul(web3.utils.toBN(gasPrice)).mul(ethPrice);
+        const profit = daiFromKyber.sub(AMOUNT_DAI_WEI).sub(txCost);
+
+        if(profit > 0) {
+          console.log('Arb opportunity found Uniswap -> Kyber!');
+          console.log(`Expected profit: ${web3.utils.fromWei(profit)} Dai`);
+          const data = tx.encodeABI();
+          const txData = {
+            from: admin,
+            to: flashloan.options.address,
+            data,
+            gas: gasCost,
+            gasPrice
+          };
+          const receipt = await web3.eth.sendTransaction(txData);
+          console.log(`Transaction hash: ${receipt.transactionHash}`);
+        }
       }
       
     })
