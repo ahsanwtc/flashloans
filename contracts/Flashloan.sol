@@ -23,6 +23,7 @@ contract Flashloan is ICallee, DydxFlashloanBase {
   IWeth weth;
   IERC20 dai;
   address constant KYBER_ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+  uint256 constant dydxFeeInWei = 2;
 
   constructor(address _kyberAddress, address _uniswapAddress, address _wethAddress, address _daiAddress) public {
     kyber = IKyberNetworkProxy(_kyberAddress);
@@ -35,6 +36,41 @@ contract Flashloan is ICallee, DydxFlashloanBase {
   // i.e. Encode the logic to handle your flashloaned funds here
   function callFunction(address sender, Account.Info memory account, bytes memory data) public {
     ArbInfo memory arbInfo = abi.decode(data, (ArbInfo));
+    uint256 balanceDai = dai.balanceOf(address(this));
+
+    if (arbInfo.direction == Direction.KyberToUniswap) {
+      /* Buy ETH on Kyber */
+      /* approve Kyber to spend our dai on our behalf */
+      dai.approve(address(kyber), balanceDai);
+      (uint256 expectedRate, ) = kyber.getExpectedRate(dai, IERC20(KYBER_ETH_ADDRESS), balanceDai);
+      kyber.swapTokenToEther(dai, balanceDai, expectedRate);
+
+      /* Sell on Uniswap */
+      address[] memory path = new address[](2);
+      path[0] = address(weth);
+      path[1] = address(dai);
+      uint256[] memory minOuts = uniswap.getAmountsOut(address(this).balance, path);
+      
+      /* using this syntax because need to send ETH to this function */
+      /* with now as deadline, we can protect ourselves against market movement, it could happen that our transaction is executed */
+      /* way after when we initiated from outside and at that point marktes have moved in opposite direction */
+      uniswap.swapETHForExactTokens.value(address(this).balance)(minOuts[1], path, address(this), now);
+    } else {
+      /* Buy ETH on Uniswap */
+      /* approve Uniswap to spend our dai on our behalf */
+      dai.approve(address(uniswap), balanceDai);
+      address[] memory path = new address[](2);
+      path[0] = address(dai);
+      path[1] = address(weth);
+      uint256[] memory minOuts = uniswap.getAmountsOut(balanceDai, path);
+      uniswap.swapExactTokensForETH(balanceDai, minOuts[1], path, address(this), now);
+
+      /* Sell on Kyber */
+      (uint256 expectedRate, ) = kyber.getExpectedRate(IERC20(KYBER_ETH_ADDRESS), dai, address(this).balance);
+      kyber.swapEtherToToken.value(address(this).balance)(dai, expectedRate);      
+    }
+
+    require(balanceDai >= arbInfo.repayAmount, 'Not enough funds to repay dydx loan');
   }
 
   function initiateFlashloan(address _solo, address _token, uint256 _amount, Direction _direction) external {
@@ -65,4 +101,6 @@ contract Flashloan is ICallee, DydxFlashloanBase {
 
     solo.operate(accountInfos, operations);
   }
+
+  function() external payable {}
 }
