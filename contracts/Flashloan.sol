@@ -3,8 +3,12 @@ pragma experimental ABIEncoderV2;
 
 import "@studydefi/money-legos/dydx/contracts/DydxFlashloanBase.sol";
 import "@studydefi/money-legos/dydx/contracts/ICallee.sol";
+import { KyberNetworkProxy as IKyberNetworkProxy } from "@studydefi/money-legos/kyber/contracts/KyberNetworkProxy.sol";
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
+import "./IUniswapV2Router02.sol";
+import "./IWeth.sol";
 
 
 contract Flashloan is ICallee, DydxFlashloanBase {
@@ -12,6 +16,19 @@ contract Flashloan is ICallee, DydxFlashloanBase {
   struct ArbInfo {
     Direction direction;
     uint repayAmount;
+  }
+
+  IKyberNetworkProxy kyber;
+  IUniswapV2Router02 uniswap;
+  IWeth weth;
+  IERC20 dai;
+  address constant KYBER_ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
+
+  constructor(address _kyberAddress, address _uniswapAddress, address _wethAddress, address _daiAddress) public {
+    kyber = IKyberNetworkProxy(_kyberAddress);
+    uniswap = IUniswapV2Router02(_uniswapAddress);
+    weth = IWeth(_wethAddress);
+    dai = IERC20(_daiAddress);
   }
 
   // This is the function that will be called postLoan
