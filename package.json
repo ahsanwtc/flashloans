@@ -22,6 +22,6 @@
     "@truffle/hdwallet-provider": "^2.0.7",
     "@uniswap/sdk": "^3.0.3",
     "dotenv": "^16.0.0",
-    "web3": "^1.7.3"
+    "web3": "^4.0.0"
   }
 }
